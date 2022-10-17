@@ -9,13 +9,6 @@ from tqdm import tqdm
 from pycocotools.coco import COCO
 
 
-def cv_imread(file_path):
-    cv_img = cv2.imdecode(np.fromfile(file_path, dtype=np.uint8), -1)
-    # im decode读取的是rgb，如果后续需要opencv处理的话，需要转换成bgr，转换后图片颜色会变化
-    cv_img = cv2.cvtColor(cv_img, cv2.COLOR_RGB2BGR)
-    return cv_img
-
-
 class Label2COCO:
     def __init__(self, root, out_dir, zh=False):
         """
@@ -273,5 +266,5 @@ class ALRound2(Label2COCO):
                         width=2560, height=1920, name="无瑕疵")
 
 
-if __name__ == '__main__':
-    al = ALRound2(r"K:\Datasets\Aluminum\guangdong_round2_train", "", "coco_format.json")
+# if __name__ == '__main__':
+#     al = ALRound2(r"K:\Datasets\Aluminum\guangdong_round2_train", "", "coco_format.json")
