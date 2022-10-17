@@ -1,7 +1,7 @@
 import os
 import torch
 import numpy as np
-from torch.utils.data import RandomSampler, DataLoader
+from torch.utils.data import RandomSampler
 from datasets import ALRound1Dataset
 from train_utils import create_aspect_ratio_groups, GroupedBatchSampler
 from models.model import ResNetClassificationModel

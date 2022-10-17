@@ -1,8 +1,7 @@
 import math
 import sys
-import time
 import torch
-import Classification.train_utils.distributed_utils as utils
+import train_utils.distributed_utils as utils
 
 
 def train_one_epoch(model, optimizer, data_loader, device, epoch,
