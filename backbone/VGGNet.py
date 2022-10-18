@@ -22,6 +22,8 @@ class VGG(nn.Module):
                  norm_layer: Optional[Callable[..., nn.Module]],
                  nums_classes: int,
                  c: bool,
+                 dropout_p: int = 0.2,
+                 lk_relu_p: int = 0.1,
                  as_backbone: bool = False,
                  ):
         super(VGG, self).__init__()
@@ -30,16 +32,17 @@ class VGG(nn.Module):
         self.c = c
         self.as_backbone = as_backbone
 
-        self.act_func = nn.ReLU()
+        self.act_func = nn.LeakyReLU(lk_relu_p, inplace=True)
         self.layer1 = self._make_layers(layers[0], 3, 64)
         self.layer2 = self._make_layers(layers[1], 64, 128)
         self.layer3 = self._make_layers(layers[2], 128, 256)
         self.layer4 = self._make_layers(layers[3], 256, 512)
-        self.layer5 = self._make_layers(layers[4], 512, 512)
+        self.layer5 = self._make_layers(layers[4], 512, nums_classes if as_backbone else 512)
 
         self.fc1 = nn.Linear(512 * 7 * 7, 4096)
         self.fc2 = nn.Linear(4096, 4096)
         self.fc3 = nn.Linear(4096, nums_classes)
+        self.dropout = nn.Dropout(dropout_p)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -81,8 +84,10 @@ class VGG(nn.Module):
         # Bx512x7x7
         x = x.flatten(start_dim=1)
         x = self.fc1(x)
+        x = self.dropout(x)
         x = self.act_func(x)
         x = self.fc2(x)
+        x = self.dropout(x)
         x = self.act_func(x)
         x = self.fc3(x)
 
