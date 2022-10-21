@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import torchvision.ops
-from torch import nn
+from torch import nn, Tensor
 from ObjectDetection.utils import Boxer
 from backbone.VGGNet import vgg_19
 
@@ -15,7 +15,7 @@ class BaseMode(nn.Module):
 
 
 class YOLO1(nn.Module):
-    def __init__(self, nums_classes, bbox_num, non_object_class=None, is_train=True):
+    def __init__(self, nums_classes, bbox_num, threshold=0.8, bg_class=None, is_train=True):
         super(YOLO1, self).__init__()
         # YOLO1将图片分成7*7的grids，对于每一个grid，
         # 网络都输出一个1x1x(B x 5+C)的tensor。
@@ -24,7 +24,8 @@ class YOLO1(nn.Module):
         self.backbone = vgg_19(bbox_num * 5 + nums_classes, as_backbone=True)
         self.num_classes = nums_classes
         self.bbox_num = bbox_num
-        self.non_object_class = nums_classes if non_object_class is None else non_object_class
+        self.bg_class = nums_classes if bg_class is None else bg_class
+        self.threshold = threshold
         self.is_train = is_train
         self.boxer = Boxer()
 
@@ -71,28 +72,60 @@ class YOLO1(nn.Module):
 
         if not self.is_train:
             # eval
-            with torch.no_grad():
-                pred_bboxes = torch.sigmoid(pred_bboxes)
-                pred_classes = torch.softmax(pred_classes, dim=-1)
-                # get the value and the index of the element with max confidence
-                pred_con_max, pred_con_max_index = torch.max(pred_con, dim=-1, keepdim=True)
-                # conditional probabilities: confidence * class_probability
-                con_prob = pred_con_max * pred_classes
-                # prediction: classes and its probability in B x 1 x h X w
-                prob, pred_class = torch.max(con_prob, dim=-1)
-                # prediction: bbox
-                pred_con_max_index = pred_con_max_index * 5
-                pred_con_max_index = pred_con_max_index.view(B, -1)
-                # filtered bounding boxes according to the confidence
-                filtered_bboxes = self.boxer.filter_bboxes(pred_bboxes, pred_con_max_index)
-                # retrieve them back to the size w.r.t original image size
-                filtered_bboxes = self.boxer.grid_cell_2_bbox_in_batch(filtered_bboxes, [H, W], [H_fea, W_fea])
-                # convert from [x,y,w,h] to [x1, y1, x2, y2]
-                filtered_bboxes = self.boxer.convert(filtered_bboxes)
+            return self.evaluation(pred_bboxes, pred_classes, pred_con, H, W, H_fea, W_fea)
 
+        # train
+        # todo: training code
 
+    def evaluation(self, pred_bboxes_batch, pred_classes_batch,
+                   pred_con_batch, h_ori, w_ori, h_fea, w_fea):
+        # type: (Tensor, Tensor, Tensor, int, int, int, int) -> dict
+        """
+        evaluation
+        :param pred_bboxes_batch: predicted bbox in a batch [B, -1, :bbox_num * 5]
+        :param pred_classes_batch: predicted classes in a batch [B, -1, bbox_num * 5:]
+        :param pred_con_batch: predicted confidence in a batch [B, -1, bbox_num]
+        :param h_ori: height original image
+        :param w_ori: width original image
+        :param h_fea: height features
+        :param w_fea: width features
+        :return: the result in a batch, which is stored into a dict in the following format
+                    dict{"bbox": [[num1, 4], [num2, 4]...], "cat": [[num1, 1], [num2, 1]...],
+                    "prob": [[num1, 1], [num2, 1]...]}
+        """
+        result = {"bbox": list(), "cat": list(), "prob": list()}
+        # iter image along batch
+        for pred_bbox, pred_class, pred_conf in zip(pred_bboxes_batch, pred_classes_batch, pred_con_batch):
+            # activate
+            pred_bbox = torch.sigmoid(pred_bbox)
+            pred_class = torch.softmax(pred_class, dim=-1)
+            # get the value and the index of the element with max confidence
+            pred_con_max, pred_con_max_index = torch.max(pred_conf, dim=-1, keepdim=True)
+            # conditional probabilities: confidence * class_probability
+            con_prob = pred_con_max * pred_class
+            # prediction: categories and its probability
+            pred_prob, pred_cat = torch.max(con_prob, dim=-1)
+            # prediction: bbox
+            pred_con_max_index = pred_con_max_index * 5
+            # filtered bounding boxes according to the confidence -> [num_patches x 4]
+            filtered_bboxes = self.boxer.filter_bboxes(pred_bbox, pred_con_max_index)
+            # retrieve them back to the size w.r.t original image size -> [num_patches x 4]
+            filtered_bboxes = self.boxer.grid_cell_2_bbox_in_batch(filtered_bboxes, [h_ori, w_ori], [h_fea, w_fea])
+            # convert from [x,y,w,h] to [x1, y1, x2, y2] -> [num_patches x 4]
+            filtered_bboxes = self.boxer.convert(filtered_bboxes)
+            # filter background class
+            bg_index = pred_cat != self.bg_class
+            filtered_bboxes = filtered_bboxes[bg_index]
+            pred_prob = pred_prob[bg_index]
+            pred_cat = pred_cat[bg_index]
+            # nms in batch fashion to fileter overlap bbox
+            keep = self.boxer.nms_in_batch(filtered_bboxes, pred_prob, pred_cat, self.threshold)
 
+            result["bbox"].append(filtered_bboxes[keep])
+            result["prob"].append(pred_prob[keep])
+            result["cat"].append(pred_cat[keep])
 
+        return result
 
 
 if __name__ == '__main__':

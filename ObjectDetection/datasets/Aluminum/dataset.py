@@ -5,7 +5,6 @@ from collections import defaultdict
 from PIL import Image
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as F
-from pycocotools.coco import COCO
 
 
 class COCOZH(COCO):
