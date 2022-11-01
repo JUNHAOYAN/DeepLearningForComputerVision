@@ -1,7 +1,13 @@
 import json
 import os
 import time
+
+import cv2
+import skimage.io as io
+import matplotlib.pyplot as plt
 from collections import defaultdict
+
+import torch
 from PIL import Image
 from pycocotools.coco import COCO
 from torch.utils.data import Dataset, DataLoader
@@ -42,6 +48,12 @@ class ALRound2Dataset(Dataset):
         bboxes = [ann["bbox"] for ann in anns]
         cat = [ann["category_id"] for ann in anns]
 
+        # x, y, w, h = bboxes[0]
+        # I = io.imread(os.path.join(self.root, file_name))
+        # img = cv2.rectangle(I, (x, y), (x+w, y+h), color=(255, 0, 0), thickness=4)
+        # plt.imshow(img)
+        # plt.show()
+
         image = F.to_tensor(image)
 
         return image, cat, bboxes
@@ -54,10 +66,11 @@ class ALRound2Dataset(Dataset):
         return tuple(zip(*batch))
 
 
-# if __name__ == '__main__':
-#     al_dataset = ALRound2Dataset(r"Z:\Datasets\Aluminum\guangdong_round2_train",
-#                                  COCOZH(r"Z:\Datasets\Aluminum\guangdong_round2_train\coco_format.json"))
-#     data_loader = DataLoader(al_dataset, 2, shuffle=True, collate_fn=al_dataset.collate_fn)
-#
-#     for images, cats, bboxes in data_loader:
-#         pass
+if __name__ == '__main__':
+    torch.manual_seed(123)
+    al_dataset = ALRound2Dataset(r"Z:\Datasets\Aluminum\guangdong_round2_train",
+                                 COCOZH(r"Z:\Datasets\Aluminum\guangdong_round2_train\coco_format.json"))
+    data_loader = DataLoader(al_dataset, 2, shuffle=True, collate_fn=al_dataset.collate_fn)
+
+    for images, cats, bboxes in data_loader:
+        pass

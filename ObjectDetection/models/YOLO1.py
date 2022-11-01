@@ -1,10 +1,13 @@
 import torch
-import numpy as np
-import torchvision.ops
 from torch import nn, Tensor
+from torch.utils.data import DataLoader
+
+from ObjectDetection.datasets.Aluminum.dataset import ALRound2Dataset, COCOZH
 from ObjectDetection.utils import Boxer
 from backbone.VGGNet import vgg_19
+from ObjectDetection.datasets import transform
 
+torch.manual_seed(123)
 
 class BaseMode(nn.Module):
     def __init__(self, num_classes, anchor_based=False):
@@ -15,7 +18,7 @@ class BaseMode(nn.Module):
 
 
 class YOLO1(nn.Module):
-    def __init__(self, nums_classes, bbox_num, threshold=0.8, bg_class=None, is_train=True):
+    def __init__(self, nums_classes, bbox_num, threshold=0.8, bg_class=None, transform=None, is_train=True):
         super(YOLO1, self).__init__()
         # YOLO1将图片分成7*7的grids，对于每一个grid，
         # 网络都输出一个1x1x(B x 5+C)的tensor。
@@ -26,6 +29,7 @@ class YOLO1(nn.Module):
         self.bbox_num = bbox_num
         self.bg_class = nums_classes if bg_class is None else bg_class
         self.threshold = threshold
+        self.transform = transform
         self.is_train = is_train
         self.boxer = Boxer()
 
@@ -97,14 +101,53 @@ class YOLO1(nn.Module):
 
         return result
 
-    def forward(self, x, label):
+    def config_gt(self, cats, grid_size, bboxes, scale):
+        # type: (list[int], list[int], list[list], int) -> torch.Tensor
         """
-        :param x: input images
-        :param label: {"bboxes": tuple(list[]), "cars": tuple(list[])}
+        config ground truth used to train in an image.
+        for each image, we need to config x, y, w, h, cat, confidence, p for each patch
+        :param cats: categories for each bbox
+        :param bboxes: bound boxes
+        :param grid_size: size of the feature
+        :param scale: original image size // feature size
+        :return: gt
+        """
+
+        h, w = grid_size[0], grid_size[1]
+        # x, y, w, h, cat, confidence
+        gt = torch.ones([h * w, 6]) * -1
+        gt[:, 4] *= self.bg_class * -1
+        for cat, bbox in zip(cats, bboxes):
+            # convert left top corner to the center point
+            bbox[0] += bbox[2] / 2
+            bbox[1] += bbox[3] / 2
+            x_gt, y_gt, w_gt, h_gt = bbox
+            x_idx, y_idx = int(x_gt // scale), int(y_gt // scale)
+            # x,y,w,h
+            gt[x_idx + y_idx * w, 0] = x_gt / scale - x_idx
+            gt[x_idx + y_idx * w, 1] = y_gt / scale - y_idx
+            gt[x_idx + y_idx * w, 2] = w_gt / (scale * w)
+            gt[x_idx + y_idx * w, 3] = h_gt / (scale * h)
+            # cat
+            gt[x_idx + y_idx * w, 4] = cat
+            # confidence: iou between gt and pred
+            gt[x_idx + y_idx * w, 5] *= -1
+
+        return gt
+
+    def forward(self, imgs, cats, bboxes):
+        # type: (tuple[torch.Tensor], tuple[list], tuple[list[list]]) -> torch.Tensor
+        """
+        :param imgs: input images
+        :param cats: categories
+        :param bboxes: bound boxes
         :return: prediction and loss
         """
-        B, _, H, W = x.size()
-        features = self.backbone(x)
+        if self.transform is not None:
+            imgs, bboxes = self.transform(imgs, bboxes)
+
+        B, _, H, W = imgs.size()
+        features = self.backbone(imgs)
         _, C, H_fea, W_fea = features.size()
         # reshape the tensor from bxcxhxw -> bx-1xc
         features = self.permute_and_flatten(features, B, C)
@@ -125,10 +168,18 @@ class YOLO1(nn.Module):
             return self.evaluation(pred_bboxes, pred_classes, pred_con, H, W, H_fea, W_fea)
 
         # train
-        # todo: training code
+        # todo: training code, 配置好了gt，下一步计算loss
+        for cat, bbox in zip(cats, bboxes):
+            gt = self.config_gt(cat, [H_fea, W_fea], bbox, H // H_fea)
 
 
 if __name__ == '__main__':
-    yolo1 = YOLO1(11, 2, is_train=False)
-    image = np.random.random([2, 3, 224, 224])
-    yolo1(torch.from_numpy(image).float(), None)
+    yolo1 = YOLO1(11, 2, is_train=True, transform=transform.Transform(0, 1, True, ratio=[0.5], scale=[224]))
+
+    al_dataset = ALRound2Dataset(r"Z:\Datasets\Aluminum\guangdong_round2_train",
+                                 COCOZH(r"Z:\Datasets\Aluminum\guangdong_round2_train\coco_format.json"),
+                                 )
+    data_loader = DataLoader(al_dataset, 2, shuffle=True, collate_fn=al_dataset.collate_fn)
+
+    for images, cat, bbox in data_loader:
+        yolo1(images, cat, bbox)

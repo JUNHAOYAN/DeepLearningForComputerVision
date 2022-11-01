@@ -57,7 +57,7 @@ class Boxer:
         # type: (torch.Tensor, list[int, int], list[int, int]) -> torch.Tensor
         """
         retrieve bbox w.r.t grid cell to the format w.r.t to original size
-        :param bboxes: bbox in batch [B, 4]
+        :param bboxes: bbox in batch [C, 4]
         :param ori_image_size: original image size in batch [h, w]
         :param grid_cell_size: grid cell size in batch [h, w]
         :return: bbox w.r.t to original size

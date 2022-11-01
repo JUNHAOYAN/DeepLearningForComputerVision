@@ -152,8 +152,10 @@ class Label2COCO:
                 return
             for label, bbox in zip(labels, bboxes):
                 # 配置 categories dict
+                # labelme: [y, x, h, w] coco: [x, y, w, h]
+                y, x, h, w = bbox
                 self.config_cat_dict(supercategory, label)
-                self.config_ann_dict(supercategory, label, bbox=bbox, **kwargs)
+                self.config_ann_dict(supercategory, label, bbox=[x, y, w, h], **kwargs)
         else:
             # 没有json文件，负样本
             if name == "":
@@ -266,5 +268,5 @@ class ALRound2(Label2COCO):
                         width=2560, height=1920, name="无瑕疵")
 
 
-# if __name__ == '__main__':
-#     al = ALRound2(r"K:\Datasets\Aluminum\guangdong_round2_train", "", "coco_format.json")
+if __name__ == '__main__':
+    al = ALRound2(r"K:\Datasets\Aluminum\guangdong_round2_train", "", "coco_format.json")
