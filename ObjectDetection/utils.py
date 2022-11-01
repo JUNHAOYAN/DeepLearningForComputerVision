@@ -49,11 +49,11 @@ class Boxer:
 
         return bboxes
 
-    def bbox_2_grid_cell_in_batch(self):
+    def bbox_2_grid_cell(self):
         ...
 
     @staticmethod
-    def grid_cell_2_bbox_in_batch(bboxes, ori_image_size, grid_cell_size):
+    def grid_cell_2_bbox(bboxes, ori_image_size, grid_cell_size):
         # type: (torch.Tensor, list[int, int], list[int, int]) -> torch.Tensor
         """
         retrieve bbox w.r.t grid cell to the format w.r.t to original size
@@ -62,7 +62,6 @@ class Boxer:
         :param grid_cell_size: grid cell size in batch [h, w]
         :return: bbox w.r.t to original size
         """
-        B = bboxes.size()[0]
         # configure the coordinates
         grid_h, grid_w = grid_cell_size[0], grid_cell_size[1]
         ori_h, ori_w = ori_image_size[0], ori_image_size[1]

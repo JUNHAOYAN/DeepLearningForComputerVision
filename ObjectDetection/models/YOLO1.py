@@ -47,36 +47,6 @@ class YOLO1(nn.Module):
 
         return x
 
-    def forward(self, x, target):
-        """
-        :param x: input images
-        :param target: list[dict{"label": int, "bbox": list}]
-        :return: prediction and loss
-        """
-        B, _, H, W = x.size()
-        features = self.backbone(x)
-        _, C, H_fea, W_fea = features.size()
-        # reshape the tensor from bxcxhxw -> bx-1xc
-        features = self.permute_and_flatten(features, B, C)
-
-        # get confidences
-        con_index = torch.arange(4, self.bbox_num * 5, 5)
-        # B x -1 x box_num
-        pred_con = features[:, :, con_index]
-
-        # get bboxes
-        # bboxes [x, y, w, h] -> x: bbox center x, y: bbox center y,
-        #                       h: height w.r.t image height, w: width w.r.t image width
-        pred_bboxes = features[:, :, :self.bbox_num * 5]
-        pred_classes = features[:, :, self.bbox_num * 5:]
-
-        if not self.is_train:
-            # eval
-            return self.evaluation(pred_bboxes, pred_classes, pred_con, H, W, H_fea, W_fea)
-
-        # train
-        # todo: training code
-
     def evaluation(self, pred_bboxes_batch, pred_classes_batch,
                    pred_con_batch, h_ori, w_ori, h_fea, w_fea):
         # type: (Tensor, Tensor, Tensor, int, int, int, int) -> dict
@@ -110,7 +80,7 @@ class YOLO1(nn.Module):
             # filtered bounding boxes according to the confidence -> [num_patches x 4]
             filtered_bboxes = self.boxer.filter_bboxes(pred_bbox, pred_con_max_index)
             # retrieve them back to the size w.r.t original image size -> [num_patches x 4]
-            filtered_bboxes = self.boxer.grid_cell_2_bbox_in_batch(filtered_bboxes, [h_ori, w_ori], [h_fea, w_fea])
+            filtered_bboxes = self.boxer.grid_cell_2_bbox(filtered_bboxes, [h_ori, w_ori], [h_fea, w_fea])
             # convert from [x,y,w,h] to [x1, y1, x2, y2] -> [num_patches x 4]
             filtered_bboxes = self.boxer.convert(filtered_bboxes)
             # filter background class
@@ -126,6 +96,36 @@ class YOLO1(nn.Module):
             result["cat"].append(pred_cat[keep])
 
         return result
+
+    def forward(self, x, label):
+        """
+        :param x: input images
+        :param label: {"bboxes": tuple(list[]), "cars": tuple(list[])}
+        :return: prediction and loss
+        """
+        B, _, H, W = x.size()
+        features = self.backbone(x)
+        _, C, H_fea, W_fea = features.size()
+        # reshape the tensor from bxcxhxw -> bx-1xc
+        features = self.permute_and_flatten(features, B, C)
+
+        # get confidences
+        con_index = torch.arange(4, self.bbox_num * 5, 5)
+        # B x -1 x box_num
+        pred_con = features[:, :, con_index]
+
+        # get bboxes
+        # bboxes [x, y, w, h] -> x: bbox center x, y: bbox center y,
+        #                       h: height w.r.t image height, w: width w.r.t image width
+        pred_bboxes = features[:, :, :self.bbox_num * 5]
+        pred_classes = features[:, :, self.bbox_num * 5:]
+
+        if not self.is_train:
+            # eval
+            return self.evaluation(pred_bboxes, pred_classes, pred_con, H, W, H_fea, W_fea)
+
+        # train
+        # todo: training code
 
 
 if __name__ == '__main__':
