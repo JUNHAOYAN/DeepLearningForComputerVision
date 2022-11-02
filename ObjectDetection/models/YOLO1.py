@@ -1,3 +1,5 @@
+from typing import Union, Any
+
 import torch
 from torch import nn, Tensor
 from torch.utils.data import DataLoader
@@ -102,7 +104,7 @@ class YOLO1(nn.Module):
         return result
 
     def config_gt(self, cats, grid_size, bboxes, scale):
-        # type: (list[int], list[int], list[list], int) -> torch.Tensor
+        # type: (list[int], list[int], list[list], int) -> Any
         """
         config ground truth used to train in an image.
         for each image, we need to config x, y, w, h, cat, confidence, p for each patch
@@ -110,13 +112,16 @@ class YOLO1(nn.Module):
         :param bboxes: bound boxes
         :param grid_size: size of the feature
         :param scale: original image size // feature size
-        :return: gt
+        :return: gt bbox, gt categories, gt confidence
         """
 
         h, w = grid_size[0], grid_size[1]
-        # x, y, w, h, cat, confidence
-        gt = torch.ones([h * w, 6]) * -1
-        gt[:, 4] *= self.bg_class * -1
+        # x, y, w, h
+        gt_bbox = torch.ones([h*w, 4]) * -1
+        # cat
+        gt_cat = torch.ones([h*w, ]) * self.bg_class
+        # confidence
+        gt_conf = torch.zeros([h*w, ])
         for cat, bbox in zip(cats, bboxes):
             # convert left top corner to the center point
             bbox[0] += bbox[2] / 2
@@ -124,16 +129,16 @@ class YOLO1(nn.Module):
             x_gt, y_gt, w_gt, h_gt = bbox
             x_idx, y_idx = int(x_gt // scale), int(y_gt // scale)
             # x,y,w,h
-            gt[x_idx + y_idx * w, 0] = x_gt / scale - x_idx
-            gt[x_idx + y_idx * w, 1] = y_gt / scale - y_idx
-            gt[x_idx + y_idx * w, 2] = w_gt / (scale * w)
-            gt[x_idx + y_idx * w, 3] = h_gt / (scale * h)
+            gt_bbox[x_idx + y_idx * w, 0] = x_gt / scale - x_idx
+            gt_bbox[x_idx + y_idx * w, 1] = y_gt / scale - y_idx
+            gt_bbox[x_idx + y_idx * w, 2] = w_gt / (scale * w)
+            gt_bbox[x_idx + y_idx * w, 3] = h_gt / (scale * h)
             # cat
-            gt[x_idx + y_idx * w, 4] = cat
+            gt_cat[x_idx + y_idx * w] = cat
             # confidence: iou between gt and pred
-            gt[x_idx + y_idx * w, 5] *= -1
+            gt_conf[x_idx + y_idx * w] = 1
 
-        return gt
+        return gt_bbox, gt_cat, gt_conf
 
     def forward(self, imgs, cats, bboxes):
         # type: (tuple[torch.Tensor], tuple[list], tuple[list[list]]) -> torch.Tensor
@@ -169,8 +174,18 @@ class YOLO1(nn.Module):
 
         # train
         # todo: training code, 配置好了gt，下一步计算loss
+        gt_bboxes, gt_cats, gt_confs = [], [], []
         for cat, bbox in zip(cats, bboxes):
-            gt = self.config_gt(cat, [H_fea, W_fea], bbox, H // H_fea)
+            gt_bbox, gt_cat, gt_conf = self.config_gt(cat, [H_fea, W_fea], bbox, H // H_fea)
+            gt_bboxes.append(gt_bbox)
+            gt_cats.append(gt_cat)
+            gt_confs.append(gt_conf)
+
+        func = lambda x: torch.stack(x, dim=0)
+        gt_bboxes, gt_cats, gt_confs = func(gt_bboxes), func(gt_cats), func(gt_confs)
+
+
+        return None
 
 
 if __name__ == '__main__':
