@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from torch import nn
+from torch import nn, Tensor
 from torchvision import transforms
 import torchvision.transforms.functional as F
 
@@ -36,7 +36,7 @@ class Transform(nn.Module):
         self.transforms = transforms.Compose(transform)
 
     def random_resize(self, imgs, bboxes):
-        # type: (torch.Tensor, tuple[list[list]]) -> [torch.Tensor, tuple[list[list]]]
+        # type: (torch.Tensor, list[Tensor]) -> [torch.Tensor, tuple[Tensor]]
         # 随机选择ration和scale裁剪图片
         if len(self.ratio) == 0 or len(self.scale) == 0:
             raise ValueError("len(ratio) <= 0 or len(scale) <= 0")
@@ -49,7 +49,7 @@ class Transform(nn.Module):
 
         h_scale, w_scale = h_ori / h, w_ori / w
         for bbox in bboxes:
-            if bbox[0]:
+            if bbox.numel() > 0:
                 for per_bbox in bbox:
                     per_bbox[0], per_bbox[2] = per_bbox[0] // w_scale, per_bbox[2] // w_scale
                     per_bbox[1], per_bbox[3] = per_bbox[1] // h_scale, per_bbox[3] // h_scale
@@ -57,7 +57,7 @@ class Transform(nn.Module):
         return imgs, bboxes
 
     def __call__(self, imgs, bboxes):
-        # type: (tuple[torch.Tensor], tuple[list[list]]) -> [torch.Tensor, tuple[list[list]]]
+        # type: (list[torch.Tensor], list[Tensor]) -> [torch.Tensor, tuple[list[list]]]
         """
         :param imgs: BxCxHxW
         :param bboxes: bounding boxes for a batch of images

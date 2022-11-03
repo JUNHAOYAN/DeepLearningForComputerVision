@@ -55,6 +55,8 @@ class ALRound2Dataset(Dataset):
         # plt.show()
 
         image = F.to_tensor(image)
+        cat = torch.tensor(cat)
+        bboxes = torch.tensor(bboxes).float()
 
         return image, cat, bboxes
 
@@ -66,11 +68,11 @@ class ALRound2Dataset(Dataset):
         return tuple(zip(*batch))
 
 
-if __name__ == '__main__':
-    torch.manual_seed(123)
-    al_dataset = ALRound2Dataset(r"Z:\Datasets\Aluminum\guangdong_round2_train",
-                                 COCOZH(r"Z:\Datasets\Aluminum\guangdong_round2_train\coco_format.json"))
-    data_loader = DataLoader(al_dataset, 2, shuffle=True, collate_fn=al_dataset.collate_fn)
-
-    for images, cats, bboxes in data_loader:
-        pass
+# if __name__ == '__main__':
+#     torch.manual_seed(123)
+#     al_dataset = ALRound2Dataset(r"Z:\Datasets\Aluminum\guangdong_round2_train",
+#                                  COCOZH(r"Z:\Datasets\Aluminum\guangdong_round2_train\coco_format.json"))
+#     data_loader = DataLoader(al_dataset, 2, shuffle=True, collate_fn=al_dataset.collate_fn)
+#
+#     for images, cats, bboxes in data_loader:
+#         pass

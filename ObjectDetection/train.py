@@ -1,22 +1,31 @@
+import argparse
 import os
-import torch
-import numpy as np
-from torch.utils.data import RandomSampler
-from datasets import ALRound1Dataset
-from ObjectDetection.train_utils import create_aspect_ratio_groups, GroupedBatchSampler
-from models.model import ResNetClassificationModel
-from backbone import BasicBlock
-from ObjectDetection.train_utils import train_one_epoch
 
-# 设置随机种子
+import numpy as np
+import torch
+
+# set up random seed
+from torch.utils.data import RandomSampler
+
+from ObjectDetection.datasets.Aluminum.dataset import ALRound2Dataset, COCOZH
+from ObjectDetection.datasets.transform import Transform
+from ObjectDetection.models.YOLO1 import YOLO1
+from ObjectDetection.train_utils import train_one_epoch, create_aspect_ratio_groups, GroupedBatchSampler
+
 torch.manual_seed(369)
 torch.cuda.manual_seed_all(369)
 np.random.seed(369)
 
 
+def get_dataset(dataset):
+    pass
+
+
 def main(args):
     # dataset
-    train_dataset = ALRound1Dataset(args.data_path)
+    train_dataset = ALRound2Dataset(args.data_path,
+                                    COCOZH(os.path.join(args.data_path, "coco_format.json"))
+                                    )
     train_sampler = None
     if args.aspect_ratio_group_factor >= 0:
         train_sampler = RandomSampler(train_dataset)
@@ -43,16 +52,18 @@ def main(args):
                                                         shuffle=True,
                                                         pin_memory=True,
                                                         num_workers=nw,
-                                                        # collate_fn=train_dataset.collate_fn
+                                                        collate_fn=train_dataset.collate_fn
                                                         )
 
     # model, num of classes + background
     device = args.device if torch.cuda.is_available() else "cpu"
-    # resnet18 as backbone
-    model = ResNetClassificationModel(num_classes=args.num_classes + 1,
-                                      block=BasicBlock,
-                                      layers=[2, 2, 2, 2],
-                                      is_train=True)
+
+    if args.model == "YOLO1":
+        model = YOLO1(args.num_classes, 2, threshold=0.8, bg_class=args.num_classes,
+                      transform=Transform(0, 1, True, ratio=[0.5], scale=[224]))
+    else:
+        raise ValueError(f"{args.model} not implemented")
+
     model.to(device)
 
     # optimizer
@@ -104,15 +115,18 @@ def main(args):
 
 
 if __name__ == '__main__':
-    import argparse
 
     parser = argparse.ArgumentParser(
         description=__doc__)
 
     # 训练设备类型
     parser.add_argument('--device', default='cuda:0', help='device')
+    # 数据集名称
+    parser.add_argument('--dataset', default='Aluminum2', help='select one of following datasets: Aluminum\n')
+    # 模型选择
+    parser.add_argument('--model', default='YOLO1', help='select one of following models: YOLO1\n')
     # 训练数据集的根目录(VOCdevkit)
-    parser.add_argument('--data-path', default=r"K:\Datasets\Aluminum\guangdong_round1_train", help='dataset')
+    parser.add_argument('--data-path', default=r"Z:\Datasets\Aluminum\guangdong_round2_train", help='dataset')
     # 检测目标类别数(不包含背景)
     parser.add_argument('--num-classes', default=11, type=int, help='num_classes')
     # 文件保存地址
@@ -136,7 +150,7 @@ if __name__ == '__main__':
                         metavar='W', help='weight decay (default: 1e-4)',
                         dest='weight_decay')
     # 训练的batch size
-    parser.add_argument('--batch_size', default=8, type=int, metavar='N',
+    parser.add_argument('--batch_size', default=4, type=int, metavar='N',
                         help='batch size when training.')
     parser.add_argument('--aspect-ratio-group-factor', default=-1, type=int)
     # 是否使用混合精度训练(需要GPU支持混合精度)

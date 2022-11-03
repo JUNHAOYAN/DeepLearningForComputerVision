@@ -1,15 +1,16 @@
-from typing import Union, Any
+from typing import Any, Union
 
 import torch
 from torch import nn, Tensor
 from torch.utils.data import DataLoader
 
+from ObjectDetection.datasets import transform
 from ObjectDetection.datasets.Aluminum.dataset import ALRound2Dataset, COCOZH
 from ObjectDetection.utils import Boxer
 from backbone.VGGNet import vgg_19
-from ObjectDetection.datasets import transform
 
 torch.manual_seed(123)
+
 
 class BaseMode(nn.Module):
     def __init__(self, num_classes, anchor_based=False):
@@ -29,15 +30,16 @@ class YOLO1(nn.Module):
         self.backbone = vgg_19(bbox_num * 5 + nums_classes, as_backbone=True)
         self.num_classes = nums_classes
         self.bbox_num = bbox_num
-        self.bg_class = nums_classes if bg_class is None else bg_class
+        self.bg_class = nums_classes - 1 if bg_class is None else bg_class
         self.threshold = threshold
         self.transform = transform
         self.is_train = is_train
         self.boxer = Boxer()
+        self.ce_loss = nn.CrossEntropyLoss(ignore_index=self.bg_class)
 
     @staticmethod
     def permute_and_flatten(x, b, c):
-        # type: (torch.Tensor, int, int) -> torch.Tensor
+        # type: (Tensor, int, int) -> Tensor
         """
         permute and flatten the input x
         :param x: input
@@ -103,8 +105,8 @@ class YOLO1(nn.Module):
 
         return result
 
-    def config_gt(self, cats, grid_size, bboxes, scale):
-        # type: (list[int], list[int], list[list], int) -> Any
+    def config_gt(self, cats, bboxes, grid_size, scale):
+        # type: (Tensor, Tensor, list[int], int) -> Any
         """
         config ground truth used to train in an image.
         for each image, we need to config x, y, w, h, cat, confidence, p for each patch
@@ -117,12 +119,18 @@ class YOLO1(nn.Module):
 
         h, w = grid_size[0], grid_size[1]
         # x, y, w, h
-        gt_bbox = torch.ones([h*w, 4]) * -1
+        gt_bbox = torch.ones([h * w, 4]) * -1
+        gt_bbox = gt_bbox.to(bboxes)
         # cat
-        gt_cat = torch.ones([h*w, ]) * self.bg_class
+        gt_cat = torch.ones([h * w, ]) * self.bg_class
+        gt_cat = gt_cat.to(cats)
         # confidence
-        gt_conf = torch.zeros([h*w, ])
+        gt_conf = torch.zeros([h * w, ])
+        gt_conf = gt_conf.to(cats)
         for cat, bbox in zip(cats, bboxes):
+            if cat == self.bg_class:
+                # background class doesn't have gt
+                continue
             # convert left top corner to the center point
             bbox[0] += bbox[2] / 2
             bbox[1] += bbox[3] / 2
@@ -140,8 +148,34 @@ class YOLO1(nn.Module):
 
         return gt_bbox, gt_cat, gt_conf
 
+    @staticmethod
+    def coord_loss(pred, gt):
+        # type: (Tensor, Tensor) -> Tensor
+        """
+        :param pred: pred bbox: [num of bbox, 4]
+        :param gt: gt bbox: [num of bbox, 4]
+        :return: loss
+        """
+
+        pred = torch.sigmoid(pred)
+
+        x_pred, y_pred, w_pred, h_pred = pred[:, 0], pred[:, 1], pred[:, 2], pred[:, 3]
+        x_gt, y_gt, w_gt, h_gt = gt[:, 0], gt[:, 1], gt[:, 2], gt[:, 3]
+
+        loss = (x_pred - x_gt) ** 2 + (y_pred - y_gt) ** 2 + (torch.sqrt(w_pred) - torch.sqrt(w_gt)) ** 2 + \
+               (torch.sqrt(h_pred) - torch.sqrt(h_gt)) ** 2
+
+        return torch.sum(loss.reshape(-1)) / loss.size(0)
+
+    @staticmethod
+    def conf_loss(pred, gt):
+        pred = torch.sigmoid(pred)
+        loss = (pred - gt) ** 2
+
+        return torch.sum(loss.reshape(-1)) / loss.size(0)
+
     def forward(self, imgs, cats, bboxes):
-        # type: (tuple[torch.Tensor], tuple[list], tuple[list[list]]) -> torch.Tensor
+        # type: (list[Tensor], list[Tensor], list[Tensor]) -> Union[Tensor, dict]
         """
         :param imgs: input images
         :param cats: categories
@@ -160,7 +194,7 @@ class YOLO1(nn.Module):
         # get confidences
         con_index = torch.arange(4, self.bbox_num * 5, 5)
         # B x -1 x box_num
-        pred_con = features[:, :, con_index]
+        pred_confs = features[:, :, con_index]
 
         # get bboxes
         # bboxes [x, y, w, h] -> x: bbox center x, y: bbox center y,
@@ -168,33 +202,59 @@ class YOLO1(nn.Module):
         pred_bboxes = features[:, :, :self.bbox_num * 5]
         pred_classes = features[:, :, self.bbox_num * 5:]
 
+        # eval
         if not self.is_train:
-            # eval
-            return self.evaluation(pred_bboxes, pred_classes, pred_con, H, W, H_fea, W_fea)
+            return self.evaluation(pred_bboxes, pred_classes, pred_confs, H, W, H_fea, W_fea)
 
         # train
-        # todo: training code, 配置好了gt，下一步计算loss
         gt_bboxes, gt_cats, gt_confs = [], [], []
         for cat, bbox in zip(cats, bboxes):
-            gt_bbox, gt_cat, gt_conf = self.config_gt(cat, [H_fea, W_fea], bbox, H // H_fea)
+            gt_bbox, gt_cat, gt_conf = self.config_gt(cat, bbox, [H_fea, W_fea], H // H_fea)
             gt_bboxes.append(gt_bbox)
             gt_cats.append(gt_cat)
             gt_confs.append(gt_conf)
 
         func = lambda x: torch.stack(x, dim=0)
         gt_bboxes, gt_cats, gt_confs = func(gt_bboxes), func(gt_cats), func(gt_confs)
+        masks = gt_cats != self.bg_class
 
+        # loss
+        loss_coord, loss_conf_w_obj, loss_conf_wo_obj = 0, 0, 0
+        for pred_bbox, pred_conf, gt_bbox, gt_conf, mask in zip(pred_bboxes, pred_confs,
+                                                                gt_bboxes, gt_confs,
+                                                                masks):
+            # todo: one of the variables needed for gradient computation has been modified by an inplace operation
+            pred_max_conf, max_conf_idx = torch.max(pred_conf, dim=-1)
+            max_conf_idx *= 5
+            # confidence loss
+            # balance loss between grids w and w/o objects
 
-        return None
+            a1, a2 = torch.sum(mask) / mask.size(0), torch.sum(~mask) / mask.size(0)
+            loss_conf_w_obj = loss_conf_w_obj + self.conf_loss(pred_max_conf[mask], gt_conf[mask]) * a2
+            loss_conf_wo_obj = loss_conf_wo_obj + self.conf_loss(pred_max_conf[~mask], gt_conf[~mask]) * a1
 
+            # only count images with front ground and then filter grids without any objects
+            gt_bbox = gt_bbox[mask]
+            pred_bbox = pred_bbox[mask]
+            if pred_bbox.numel() > 0:
+                pred_bbox = self.boxer.filter_bboxes(pred_bbox, max_conf_idx[mask])
+                # coord loss
+                loss_coord = loss_coord + self.coord_loss(pred_bbox, gt_bbox)
+        loss_coord = loss_coord / B
+        loss_conf_w_obj = loss_conf_w_obj / B
+        loss_conf_wo_obj = loss_conf_wo_obj / B
+        loss_class = self.ce_loss(pred_classes.permute(0, 2, 1), gt_cats.long())
 
-if __name__ == '__main__':
-    yolo1 = YOLO1(11, 2, is_train=True, transform=transform.Transform(0, 1, True, ratio=[0.5], scale=[224]))
+        total_loss = 5 * loss_coord + 0.5 * loss_conf_wo_obj + loss_conf_w_obj + loss_class
+        return {"total_loss": total_loss}
 
-    al_dataset = ALRound2Dataset(r"Z:\Datasets\Aluminum\guangdong_round2_train",
-                                 COCOZH(r"Z:\Datasets\Aluminum\guangdong_round2_train\coco_format.json"),
-                                 )
-    data_loader = DataLoader(al_dataset, 2, shuffle=True, collate_fn=al_dataset.collate_fn)
-
-    for images, cat, bbox in data_loader:
-        yolo1(images, cat, bbox)
+# if __name__ == '__main__':
+#     yolo1 = YOLO1(11, 2, is_train=True, transform=transform.Transform(0, 1, True, ratio=[0.5], scale=[224]))
+#
+#     al_dataset = ALRound2Dataset(r"Z:\Datasets\Aluminum\guangdong_round2_train",
+#                                  COCOZH(r"Z:\Datasets\Aluminum\guangdong_round2_train\coco_format.json"),
+#                                  )
+#     data_loader = DataLoader(al_dataset, 2, shuffle=True, collate_fn=al_dataset.collate_fn)
+#
+#     for images, cat, bbox in data_loader:
+#         yolo1(images, cat, bbox)

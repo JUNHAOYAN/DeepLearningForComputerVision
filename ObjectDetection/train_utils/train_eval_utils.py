@@ -1,7 +1,7 @@
 import math
 import sys
 import torch
-import train_utils.distributed_utils as utils
+from ObjectDetection import train_utils as utils
 
 
 def train_one_epoch(model, optimizer, data_loader, device, epoch,
@@ -20,13 +20,17 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch,
 
     now_lr = 0
     mloss = torch.zeros(1).to(device)  # mean losses
-    for i, [images, targets] in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
-        images = images.to(device)
-        targets = targets.to(device)
+
+    torch.autograd.set_detect_anomaly(True)
+
+    for i, [images, cats, bboxes] in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+        images = [img.to(device) for img in images]
+        cats = [cat.to(device) for cat in cats]
+        bboxes = [bbox.to(device) for bbox in bboxes]
 
         # 混合精度训练上下文管理器，如果在CPU环境中不起任何作用
         with torch.cuda.amp.autocast(enabled=scaler is not None):
-            pred, loss_dict = model(images, targets)
+            loss_dict = model(images, cats, bboxes)
             losses = sum(loss for loss in loss_dict.values())
 
         # reduce losses over all GPUs for logging purpose
