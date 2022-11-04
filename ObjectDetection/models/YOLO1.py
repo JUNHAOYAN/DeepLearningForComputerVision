@@ -2,10 +2,7 @@ from typing import Any, Union
 
 import torch
 from torch import nn, Tensor
-from torch.utils.data import DataLoader
 
-from ObjectDetection.datasets import transform
-from ObjectDetection.datasets.Aluminum.dataset import ALRound2Dataset, COCOZH
 from ObjectDetection.utils import Boxer
 from backbone.VGGNet import vgg_19
 
@@ -169,6 +166,8 @@ class YOLO1(nn.Module):
 
     @staticmethod
     def conf_loss(pred, gt):
+        if pred.numel() == 0:
+            return 0
         pred = torch.sigmoid(pred)
         loss = (pred - gt) ** 2
 
@@ -225,11 +224,11 @@ class YOLO1(nn.Module):
                                                                 masks):
             # todo: one of the variables needed for gradient computation has been modified by an inplace operation
             pred_max_conf, max_conf_idx = torch.max(pred_conf, dim=-1)
-            max_conf_idx *= 5
+            max_conf_idx = max_conf_idx * 5
             # confidence loss
             # balance loss between grids w and w/o objects
-
             a1, a2 = torch.sum(mask) / mask.size(0), torch.sum(~mask) / mask.size(0)
+
             loss_conf_w_obj = loss_conf_w_obj + self.conf_loss(pred_max_conf[mask], gt_conf[mask]) * a2
             loss_conf_wo_obj = loss_conf_wo_obj + self.conf_loss(pred_max_conf[~mask], gt_conf[~mask]) * a1
 
@@ -246,6 +245,7 @@ class YOLO1(nn.Module):
         loss_class = self.ce_loss(pred_classes.permute(0, 2, 1), gt_cats.long())
 
         total_loss = 5 * loss_coord + 0.5 * loss_conf_wo_obj + loss_conf_w_obj + loss_class
+
         return {"total_loss": total_loss}
 
 # if __name__ == '__main__':

@@ -59,7 +59,7 @@ def main(args):
     device = args.device if torch.cuda.is_available() else "cpu"
 
     if args.model == "YOLO1":
-        model = YOLO1(args.num_classes, 2, threshold=0.8, bg_class=args.num_classes,
+        model = YOLO1(args.num_classes, 2, threshold=0.8,
                       transform=Transform(0, 1, True, ratio=[0.5], scale=[224]))
     else:
         raise ValueError(f"{args.model} not implemented")
